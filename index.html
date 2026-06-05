@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kontrol Suhu Panel</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+</head>
+<body>
+    <!-- Splash Screen / Opening -->
+    <div id="splashScreen" class="splash-screen">
+        <div class="splash-content">
+            <i class="fa-solid fa-leaf splash-logo"></i>
+            <h1 class="splash-title">Kontrol Suhu Panel</h1>
+            <div class="splash-loader"></div>
+        </div>
+    </div>
+
+    <div class="dashboard">
+        <header class="header">
+            <div class="logo">
+                <i class="fa-solid fa-microchip"></i>
+                <div>
+                    <h1>Kontrol Suhu Panel</h1>
+                    <p>Firebase Realtime Monitoring</p>
+                </div>
+            </div>
+            <div class="status-badge offline" id="connectionStatus">
+                <span class="dot"></span>
+                <span id="statusText">Offline</span>
+            </div>
+        </header>
+
+        <main class="grid-container">
+            <!-- Kartu Suhu Saat Ini -->
+            <div class="card temp-card">
+                <div class="card-header">
+                    <i class="fa-solid fa-temperature-half"></i>
+                    <h2>Suhu Sekarang</h2>
+                </div>
+                <div class="card-body">
+                    <div class="temp-value">
+                        <span id="currentTemp">--</span>
+                        <span class="unit">&deg;C</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Kartu Output PID -->
+            <div class="card pid-card">
+                <div class="card-header">
+                    <i class="fa-solid fa-wave-square"></i>
+                    <h2>Output PID</h2>
+                </div>
+                <div class="card-body">
+                    <div class="pid-value">
+                        <span id="pidOutput">--</span>
+                        <span class="unit">ms</span>
+                    </div>
+                    <div class="pid-meter" aria-hidden="true">
+                        <span id="pidMeterBar"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Kartu Target Suhu (Setpoint) -->
+            <div class="card setpoint-card">
+                <div class="card-header">
+                    <i class="fa-solid fa-bullseye"></i>
+                    <h2>Target Suhu (Setpoint)</h2>
+                </div>
+                <div class="card-body">
+                    <div class="input-group">
+                        <input type="number" id="setpointInput" step="0.1" placeholder="25.0">
+                        <span class="unit">&deg;C</span>
+                    </div>
+                    <button id="btnSaveSetpoint" class="btn btn-primary">
+                        <i class="fa-solid fa-floppy-disk"></i>
+                        Simpan Target
+                    </button>
+                </div>
+            </div>
+
+            <!-- Kartu Mode Operasi -->
+            <div class="card mode-card">
+                <div class="card-header">
+                    <i class="fa-solid fa-sliders"></i>
+                    <h2>Mode Operasi</h2>
+                </div>
+                <div class="card-body">
+                    <div class="mode-toggle">
+                        <input type="radio" id="modeAuto" name="mode" value="auto" checked>
+                        <label for="modeAuto">Otomatis (PID)</label>
+                        <input type="radio" id="modeManual" name="mode" value="manual">
+                        <label for="modeManual">Manual</label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Kartu Status Kipas 1 -->
+            <div class="card relay-card">
+                <div class="card-header">
+                    <i class="fa-solid fa-fan"></i>
+                    <h2>Kipas 1 (Relay 1)</h2>
+                </div>
+                <div class="card-body">
+                    <div class="relay-status" id="relay1StatusText">OFF</div>
+                    <label class="switch">
+                        <input type="checkbox" id="relay1Toggle" disabled>
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Kartu Status Kipas 2 -->
+            <div class="card relay-card">
+                <div class="card-header">
+                    <i class="fa-solid fa-fan"></i>
+                    <h2>Kipas 2 (Relay 2)</h2>
+                </div>
+                <div class="card-body">
+                    <div class="relay-status" id="relay2StatusText">OFF</div>
+                    <label class="switch">
+                        <input type="checkbox" id="relay2Toggle" disabled>
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+            </div>
+        </main>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
