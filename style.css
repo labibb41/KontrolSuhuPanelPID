@@ -122,7 +122,7 @@ body {
 
 .grid-container {
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 16px;
 }
 
@@ -137,17 +137,6 @@ body {
     border: 1px solid var(--line);
     border-radius: var(--radius);
     box-shadow: var(--shadow);
-}
-
-.temp-card,
-.pid-card,
-.setpoint-card {
-    grid-column: span 2;
-}
-
-.mode-card,
-.relay-card {
-    grid-column: span 2;
 }
 
 .card-header {
@@ -431,15 +420,22 @@ input:disabled + .slider {
 }
 
 .splash-logo {
-    display: grid;
-    place-items: center;
-    width: 72px;
-    height: 72px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 76px;
+    height: 76px;
     color: #ffffff;
     background: var(--green);
     border-radius: var(--radius);
-    font-size: 2rem;
+    font-size: 2.05rem;
+    line-height: 1;
     box-shadow: var(--shadow);
+}
+
+.splash-logo::before {
+    display: block;
+    line-height: 1;
 }
 
 .splash-title {
@@ -476,19 +472,6 @@ input:disabled + .slider {
     }
 }
 
-@media (max-width: 980px) {
-    .temp-card,
-    .pid-card,
-    .setpoint-card,
-    .mode-card {
-        grid-column: span 3;
-    }
-
-    .relay-card {
-        grid-column: span 3;
-    }
-}
-
 @media (max-width: 700px) {
     body {
         padding: 14px;
@@ -503,11 +486,7 @@ input:disabled + .slider {
         justify-content: center;
     }
 
-    .temp-card,
-    .pid-card,
-    .setpoint-card,
-    .mode-card,
-    .relay-card {
-        grid-column: span 6;
+    .grid-container {
+        grid-template-columns: 1fr;
     }
 }
