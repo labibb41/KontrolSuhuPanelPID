@@ -155,6 +155,13 @@ function updateRelayUI(relayNum, isOn) {
     }
 }
 
+function revertRelayToggle(relayNum) {
+    const toggleEl = relayNum === 1 ? elRelay1Toggle : elRelay2Toggle;
+    const isOn = !toggleEl.checked;
+    toggleEl.checked = isOn;
+    updateRelayUI(relayNum, isOn);
+}
+
 function enableManualControl(isManual) {
     elRelay1Toggle.disabled = !isManual;
     elRelay2Toggle.disabled = !isManual;
@@ -222,11 +229,13 @@ elRelay1Toggle.addEventListener('change', async (event) => {
     }
 
     const cmd = event.target.checked ? 'ON' : 'OFF';
+    updateRelayUI(1, event.target.checked);
+
     try {
         await database.ref(paths.relay1Command).set(cmd);
     } catch (error) {
         handleFirebaseError(error);
-        event.target.checked = !event.target.checked;
+        revertRelayToggle(1);
     }
 });
 
@@ -238,10 +247,12 @@ elRelay2Toggle.addEventListener('change', async (event) => {
     }
 
     const cmd = event.target.checked ? 'ON' : 'OFF';
+    updateRelayUI(2, event.target.checked);
+
     try {
         await database.ref(paths.relay2Command).set(cmd);
     } catch (error) {
         handleFirebaseError(error);
-        event.target.checked = !event.target.checked;
+        revertRelayToggle(2);
     }
 });

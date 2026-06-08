@@ -39,6 +39,7 @@ PID myPID(&InputSuhu, &OutputPID, &Setpoint, Kp, Ki, Kd, REVERSE);
 
 int WindowSize = 5000;
 unsigned long windowStartTime;
+const double TemperatureTolerance = 1.0;
 
 // ==========================
 // Objek
@@ -287,6 +288,10 @@ void loop()
       relay2Command == "ON"
     );
   }
+  else if (InputSuhu > (Setpoint + TemperatureTolerance))
+  {
+    setRelayState(false, false);
+  }
   // Kontrol relay otomatis berdasarkan PID
   else if (OutputPID > (now - windowStartTime))
   {
@@ -308,6 +313,7 @@ void loop()
     Serial.println("==========");
     Serial.printf("Suhu sekarang : %.2f C\n", InputSuhu);
     Serial.printf("Setpoint      : %.2f C\n", Setpoint);
+    Serial.printf("Batas mati    : %.2f C\n", Setpoint + TemperatureTolerance);
     Serial.printf("Mode operasi  : %s\n", modeOperasi.c_str());
     Serial.printf("Relay 1       : %s\n", statusRelay1.c_str());
     Serial.printf("Relay 2       : %s\n", statusRelay2.c_str());

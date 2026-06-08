@@ -340,6 +340,7 @@ input[type="number"]:focus {
     font-weight: 850;
     text-align: center;
     letter-spacing: 0;
+    transition: color 80ms linear, background 80ms linear, border-color 80ms linear;
 }
 
 .relay-status.on {
@@ -367,7 +368,7 @@ input[type="number"]:focus {
     background: #cbd5e1;
     border-radius: 999px;
     cursor: pointer;
-    transition: background var(--transition), opacity var(--transition);
+    transition: background 120ms linear, opacity 120ms linear;
 }
 
 .slider::before {
@@ -380,7 +381,7 @@ input[type="number"]:focus {
     background: #ffffff;
     border-radius: 50%;
     box-shadow: 0 2px 7px rgba(15, 23, 42, 0.25);
-    transition: transform var(--transition);
+    transition: transform 120ms ease;
 }
 
 input:checked + .slider {
