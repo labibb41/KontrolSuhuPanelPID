@@ -1,19 +1,24 @@
 #include <WiFi.h>
+#include <WiFiClientSecure.h> // Wajib untuk port 8883 (TLS/SSL)
+#include <PubSubClient.h>     // Library MQTT
 #include <DHT.h>
 #include <PID_v1_bc.h>
-#include <Firebase_ESP_Client.h>
-
-#include <addons/TokenHelper.h>
-#include <addons/RTDBHelper.h>
+#include <ArduinoJson.h>      // Digunakan untuk parsing data kontrol JSON dari Cloud
 
 // ==========================
-// Konfigurasi WiFi & Firebase
+// Konfigurasi WiFi & EMQX Cloud
 // ==========================
-#define WIFI_SSID "WIFI_ID_ANDA"
-#define WIFI_PASSWORD "PASSWORD_WIFI_ANDA"
+#define WIFI_SSID "yoii"
+#define WIFI_PASSWORD "123456789"
 
-#define API_KEY "AIzaSyBdbq2LHD1n6smpjI67h2Um48ysPfVqUCo"
-#define DATABASE_URL "https://kontrolpanel-f4a91-default-rtdb.firebaseio.com/"
+const char* mqtt_server = "s6ddf312.ala.asia-southeast1.emqxsl.com"; 
+const int mqtt_port = 8883; 
+const char* mqtt_user = "ESP32_ZAQI";                          
+const char* mqtt_pass = "Zaqi123"; 
+
+// Topic MQTT
+#define TOPIC_MONITORING "monitoring/data"
+#define TOPIC_KONTROL    "kontrol/#"         // Menerima semua data kontrol di bawah prefix /kontrol
 
 // ==========================
 // Konfigurasi Hardware
@@ -39,17 +44,14 @@ PID myPID(&InputSuhu, &OutputPID, &Setpoint, Kp, Ki, Kd, REVERSE);
 
 int WindowSize = 5000;
 unsigned long windowStartTime;
-const double TemperatureTolerance = 1.0;
 
 // ==========================
-// Objek
+// Objek Klien
 // ==========================
 DHT dht(DHTPIN, DHTTYPE);
 
-FirebaseData fbdo;
-FirebaseData fbdo_stream;
-FirebaseAuth auth;
-FirebaseConfig config;
+WiFiClientSecure espClient;
+PubSubClient client(espClient);
 
 unsigned long sendDataPrevMillis = 0;
 const unsigned long updateInterval = 5000;
@@ -78,114 +80,115 @@ void updatePidTunings()
 
   Serial.printf(
     "Parameter Baru -> Kp=%.2f Ki=%.2f Kd=%.2f Setpoint=%.2f Mode=%s\n",
-    Kp,
-    Ki,
-    Kd,
-    Setpoint,
-    modeOperasi.c_str()
+    Kp, Ki, Kd, Setpoint, modeOperasi.c_str()
   );
 }
 
-void applyKontrolValue(String path, String type, FirebaseStream &data)
-{
-  path.replace("/", "");
+// ==========================
+// Callback MQTT (Pengganti Stream Firebase)
+// ==========================
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  String message = "";
+  for (int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+  
+  String strTopic = String(topic);
+  Serial.printf("Message arrived [%s]: %s\n", topic, message.c_str());
 
-  if (path == "Kp")
-  {
-    Kp = data.doubleData();
+  // Memproses data kontrol tunggal (Contoh jika dikirim via topic terpisah: kontrol/Kp)
+  if (strTopic.endsWith("Kp")) {
+    Kp = message.toDouble();
     updatePidTunings();
-  }
-  else if (path == "Ki")
-  {
-    Ki = data.doubleData();
+  } 
+  else if (strTopic.endsWith("Ki")) {
+    Ki = message.toDouble();
     updatePidTunings();
-  }
-  else if (path == "Kd")
-  {
-    Kd = data.doubleData();
+  } 
+  else if (strTopic.endsWith("Kd")) {
+    Kd = message.toDouble();
     updatePidTunings();
-  }
-  else if (path == "Setpoint")
-  {
-    Setpoint = data.doubleData();
-    Serial.printf("Setpoint dari web diperbarui: %.2f C\n", Setpoint);
-  }
-  else if (path == "mode")
-  {
-    modeOperasi = data.stringData();
+  } 
+  else if (strTopic.endsWith("Setpoint")) {
+    Setpoint = message.toDouble();
+    Serial.printf("Setpoint diperbarui: %.2f C\n", Setpoint);
+  } 
+  else if (strTopic.endsWith("mode")) {
+    modeOperasi = message;
     modeOperasi.toLowerCase();
     Serial.printf("Mode operasi diperbarui: %s\n", modeOperasi.c_str());
-  }
-  else if (path == "relay1_command")
-  {
-    relay1Command = data.stringData();
+  } 
+  else if (strTopic.endsWith("relay1_command")) {
+    relay1Command = message;
     relay1Command.toUpperCase();
     Serial.printf("Command Relay 1: %s\n", relay1Command.c_str());
-  }
-  else if (path == "relay2_command")
-  {
-    relay2Command = data.stringData();
+  } 
+  else if (strTopic.endsWith("relay2_command")) {
+    relay2Command = message;
     relay2Command.toUpperCase();
     Serial.printf("Command Relay 2: %s\n", relay2Command.c_str());
   }
-}
-
-// ==========================
-// Callback Firebase Stream
-// ==========================
-void streamCallback(FirebaseStream data)
-{
-  String path = data.dataPath();
-  String type = data.dataType();
-
-  if (data.dataType() == "json")
-  {
-    FirebaseJson *json = data.to<FirebaseJson *>();
-    FirebaseJsonData jsonData;
-
-    if (json->get(jsonData, "Kp"))
-      Kp = jsonData.doubleValue;
-
-    if (json->get(jsonData, "Ki"))
-      Ki = jsonData.doubleValue;
-
-    if (json->get(jsonData, "Kd"))
-      Kd = jsonData.doubleValue;
-
-    if (json->get(jsonData, "Setpoint"))
-      Setpoint = jsonData.doubleValue;
-
-    if (json->get(jsonData, "mode"))
-    {
-      modeOperasi = jsonData.stringValue;
-      modeOperasi.toLowerCase();
+  
+  // OPSI JSON: Jika Anda mengirim konfigurasi sekaligus berbentuk JSON ke topic "kontrol"
+  else if (strTopic == "kontrol") {
+    StaticJsonDocument<256> doc;
+    DeserializationError error = deserializeJson(doc, message);
+    if (!error) {
+      if (doc.containsKey("Kp")) Kp = doc["Kp"].as<double>();
+      if (doc.containsKey("Ki")) Ki = doc["Ki"].as<double>();
+      if (doc.containsKey("Kd")) Kd = doc["Kd"].as<double>();
+      if (doc.containsKey("Setpoint")) Setpoint = doc["Setpoint"].as<double>();
+      if (doc.containsKey("mode")) {
+        modeOperasi = doc["mode"].as<String>();
+        modeOperasi.toLowerCase();
+      }
+      if (doc.containsKey("relay1_command")) {
+        relay1Command = doc["relay1_command"].as<String>();
+        relay1Command.toUpperCase();
+      }
+      if (doc.containsKey("relay2_command")) {
+        relay2Command = doc["relay2_command"].as<String>();
+        relay2Command.toUpperCase();
+      }
+      updatePidTunings();
     }
-
-    if (json->get(jsonData, "relay1_command"))
-    {
-      relay1Command = jsonData.stringValue;
-      relay1Command.toUpperCase();
-    }
-
-    if (json->get(jsonData, "relay2_command"))
-    {
-      relay2Command = jsonData.stringValue;
-      relay2Command.toUpperCase();
-    }
-
-    updatePidTunings();
-  }
-  else
-  {
-    applyKontrolValue(path, type, data);
   }
 }
 
-void streamTimeoutCallback(bool timeout)
-{
-  if (timeout)
-  {
-    Serial.println("Stream timeout, reconnect...");
+void setup_wifi() {
+  delay(10);
+  Serial.println("\nMenghubungkan WiFi...");
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi Terhubung");
+  Serial.println(WiFi.localIP());
+}
+
+void reconnectMQTT() {
+  while (!client.connected()) {
+    Serial.print("Mencoba koneksi MQTT ke EMQX Cloud...");
+    
+    // Membuat Client ID Unik
+    String clientId = "ESP32-ZAQI-";
+    clientId += String(random(0, 0xffff), HEX);
+    
+    // Connect menggunakan Username dan Password EMQX Cloud
+    if (client.connect(clientId.c_str(), mqtt_user, mqtt_pass)) {
+      Serial.println("CONNECTED to EMQX Cloud!");
+      
+      // Subscribe kembali ke topic kontrol setelah berhasil terhubung
+      client.subscribe(TOPIC_KONTROL);
+      client.subscribe("kontrol"); // Menjaga jika payload berbentuk JSON utuh
+    } else {
+      Serial.print("gagal, rc=");
+      Serial.print(client.state());
+      Serial.println(" coba lagi dalam 5 detik");
+      delay(5000);
+    }
   }
 }
 
@@ -203,54 +206,14 @@ void setup()
   digitalWrite(RELAY_PIN_2, LOW);
 
   dht.begin();
+  setup_wifi();
 
-  Serial.println("Menghubungkan WiFi...");
+  // BAGIAN PENTING: Mengabaikan pengecekan sertifikat SSL agar ESP32 lancar di port 8883
+  espClient.setInsecure(); 
 
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    delay(500);
-    Serial.print(".");
-  }
-
-  Serial.println();
-  Serial.println("WiFi Terhubung");
-  Serial.println(WiFi.localIP());
-
-  // Firebase
-  config.api_key = API_KEY;
-  config.database_url = DATABASE_URL;
-
-  if (Firebase.signUp(&config, &auth, "", ""))
-  {
-    Serial.println("Firebase SignUp Berhasil");
-  }
-  else
-  {
-    Serial.printf(
-      "SignUp Gagal: %s\n",
-      config.signer.signupError.message.c_str()
-    );
-  }
-
-  Firebase.begin(&config, &auth);
-  Firebase.reconnectWiFi(true);
-
-  // Stream parameter PID
-  if (!Firebase.RTDB.beginStream(&fbdo_stream, "/kontrol"))
-  {
-    Serial.printf(
-      "Gagal Stream: %s\n",
-      fbdo_stream.errorReason().c_str()
-    );
-  }
-
-  Firebase.RTDB.setStreamCallback(
-    &fbdo_stream,
-    streamCallback,
-    streamTimeoutCallback
-  );
+  // Setup MQTT
+  client.setServer(mqtt_server, mqtt_port);
+  client.setCallback(mqttCallback);
 
   windowStartTime = millis();
 
@@ -265,6 +228,12 @@ void setup()
 // ==========================
 void loop()
 {
+  // Pastikan koneksi MQTT tetap terjaga
+  if (!client.connected()) {
+    reconnectMQTT();
+  }
+  client.loop();
+
   float suhu = dht.readTemperature();
 
   if (!isnan(suhu))
@@ -288,10 +257,6 @@ void loop()
       relay2Command == "ON"
     );
   }
-  else if (InputSuhu > (Setpoint + TemperatureTolerance))
-  {
-    setRelayState(false, false);
-  }
   // Kontrol relay otomatis berdasarkan PID
   else if (OutputPID > (now - windowStartTime))
   {
@@ -302,6 +267,7 @@ void loop()
     setRelayState(false, false);
   }
 
+  // Kirim data monitoring ke EMQX Cloud setiap 5 detik
   if (millis() - sendDataPrevMillis > updateInterval)
   {
     sendDataPrevMillis = millis();
@@ -313,55 +279,28 @@ void loop()
     Serial.println("==========");
     Serial.printf("Suhu sekarang : %.2f C\n", InputSuhu);
     Serial.printf("Setpoint      : %.2f C\n", Setpoint);
-    Serial.printf("Batas mati    : %.2f C\n", Setpoint + TemperatureTolerance);
     Serial.printf("Mode operasi  : %s\n", modeOperasi.c_str());
     Serial.printf("Relay 1       : %s\n", statusRelay1.c_str());
     Serial.printf("Relay 2       : %s\n", statusRelay2.c_str());
     Serial.printf("PID Output    : %.2f\n", OutputPID);
 
-    if (Firebase.ready())
-    {
-      Firebase.RTDB.setFloat(
-        &fbdo,
-        "/monitoring/suhu",
-        InputSuhu
-      );
+    // Membunder data monitoring menjadi satu JSON utuh untuk dikirim ke MQTT Broker
+    StaticJsonDocument<256> doc;
+    doc["suhu"] = InputSuhu;
+    doc["output_pid"] = OutputPID;
+    doc["setpoint"] = Setpoint;
+    doc["mode"] = modeOperasi;
+    doc["relay1"] = statusRelay1;
+    doc["relay2"] = statusRelay2;
+    doc["status_kipas"] = statusKipas;
 
-      Firebase.RTDB.setFloat(
-        &fbdo,
-        "/monitoring/output_pid",
-        OutputPID
-      );
+    char jsonBuffer[256];
+    serializeJson(doc, jsonBuffer);
 
-      Firebase.RTDB.setFloat(
-        &fbdo,
-        "/monitoring/setpoint",
-        Setpoint
-      );
-
-      Firebase.RTDB.setString(
-        &fbdo,
-        "/monitoring/mode",
-        modeOperasi
-      );
-
-      Firebase.RTDB.setString(
-        &fbdo,
-        "/monitoring/relay1",
-        statusRelay1
-      );
-
-      Firebase.RTDB.setString(
-        &fbdo,
-        "/monitoring/relay2",
-        statusRelay2
-      );
-
-      Firebase.RTDB.setString(
-        &fbdo,
-        "/monitoring/status_kipas",
-        statusKipas
-      );
+    // Publish data ke topic "monitoring/data"
+    if (client.connected()) {
+      client.publish(TOPIC_MONITORING, jsonBuffer);
+      Serial.println("Data Berhasil di-Publish ke EMQX Cloud.");
     }
   }
 }

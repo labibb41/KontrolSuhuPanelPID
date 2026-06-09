@@ -11,27 +11,26 @@ window.addEventListener('load', () => {
     }, 2000);
 });
 
-// Konfigurasi Firebase
-// API key dan database URL disamakan dengan program ESP32.
-const firebaseConfig = {
-    apiKey: 'AIzaSyBdbq2LHD1n6smpjI67h2Um48ysPfVqUCo',
-    databaseURL: 'https://kontrolpanel-f4a91-default-rtdb.firebaseio.com/',
+// Konfigurasi MQTT EMQX Cloud
+// Sesuaikan jika endpoint WebSocket broker kamu berbeda.
+const mqttUrl = 'wss://s6ddf312.ala.asia-southeast1.emqxsl.com:8084/mqtt';
+const mqttOptions = {
+    clientId: `web_client_${Math.random().toString(16).slice(2, 10)}`,
+    username: 'ESP32_ZAQI',
+    password: 'Zaqi123',
+    clean: true,
+    connectTimeout: 4000,
+    reconnectPeriod: 2000,
+    keepalive: 30,
+    protocolVersion: 4,
 };
 
-const app = firebase.initializeApp(firebaseConfig);
-const auth = firebase.auth(app);
-const database = firebase.database(app);
-
-// Path Firebase RTDB yang digunakan ESP32
-const paths = {
-    monitoring: '/monitoring',
-    suhu: '/monitoring/suhu',
-    statusKipas: '/monitoring/status_kipas',
-    outputPid: '/monitoring/output_pid',
-    setpoint: '/kontrol/Setpoint',
-    mode: '/kontrol/mode',
-    relay1Command: '/kontrol/relay1_command',
-    relay2Command: '/kontrol/relay2_command',
+const topics = {
+    monitoring: 'monitoring/data',
+    setpoint: 'kontrol/Setpoint',
+    mode: 'kontrol/mode',
+    relay1Command: 'kontrol/relay1_command',
+    relay2Command: 'kontrol/relay2_command',
 };
 
 // Referensi Elemen DOM
@@ -49,75 +48,113 @@ const elRelay2Toggle = document.getElementById('relay2Toggle');
 const radioModeAuto = document.getElementById('modeAuto');
 const radioModeManual = document.getElementById('modeManual');
 
-signInAndStart();
+let mqttClient = null;
+let lastMode = 'auto';
 
-async function signInAndStart() {
-    try {
-        await auth.signInAnonymously();
-        startFirebaseListeners();
-    } catch (error) {
-        console.warn('Login anonymous Firebase gagal, mencoba akses database tanpa auth.', error);
-        startFirebaseListeners();
+connectMqtt();
+
+function connectMqtt() {
+    mqttClient = mqtt.connect(mqttUrl, mqttOptions);
+
+    mqttClient.on('connect', () => {
+        updateConnectionStatus(true);
+        mqttClient.subscribe([topics.monitoring, topics.setpoint, topics.mode, topics.relay1Command, topics.relay2Command]);
+    });
+
+    mqttClient.on('reconnect', () => {
+        updateConnectionStatus(false);
+    });
+
+    mqttClient.on('close', () => {
+        updateConnectionStatus(false);
+    });
+
+    mqttClient.on('offline', () => {
+        updateConnectionStatus(false);
+    });
+
+    mqttClient.on('error', (error) => {
+        console.error('MQTT Error:', error);
+        updateConnectionStatus(false);
+    });
+
+    mqttClient.on('message', handleMqttMessage);
+}
+
+function handleMqttMessage(topic, payloadBuffer) {
+    const payload = payloadBuffer.toString();
+
+    if (topic === topics.monitoring) {
+        try {
+            const data = JSON.parse(payload);
+            if (data.suhu !== undefined) {
+                updateTemperature(data.suhu);
+            }
+
+            if (data.output_pid !== undefined) {
+                updatePidOutput(data.output_pid);
+            }
+
+            if (data.setpoint !== undefined) {
+                syncSetpointInput(data.setpoint);
+            }
+
+            if (data.mode !== undefined) {
+                syncMode(String(data.mode).toLowerCase());
+            }
+
+            if (data.relay1 !== undefined) {
+                updateRelayUI(1, String(data.relay1).toUpperCase() === 'ON');
+            }
+
+            if (data.relay2 !== undefined) {
+                updateRelayUI(2, String(data.relay2).toUpperCase() === 'ON');
+            } else if (data.status_kipas !== undefined) {
+                const isOn = String(data.status_kipas).toUpperCase() === 'ON';
+                updateRelayUI(1, isOn);
+                updateRelayUI(2, isOn);
+            }
+        } catch (error) {
+            console.error('Gagal parse payload monitoring:', error);
+        }
+        return;
+    }
+
+    if (topic === topics.setpoint) {
+        syncSetpointInput(payload);
+        return;
+    }
+
+    if (topic === topics.mode) {
+        syncMode(payload.toLowerCase());
+        return;
+    }
+
+    if (topic === topics.relay1Command) {
+        updateRelayUI(1, payload.toUpperCase() === 'ON');
+        return;
+    }
+
+    if (topic === topics.relay2Command) {
+        updateRelayUI(2, payload.toUpperCase() === 'ON');
     }
 }
 
-function startFirebaseListeners() {
-    // Listener koneksi Firebase
-    database.ref('.info/connected').on('value', (snapshot) => {
-        updateConnectionStatus(snapshot.val() === true);
-    });
-
-    // Listener data monitoring dari ESP32
-    database.ref(paths.monitoring).on('value', (snapshot) => {
-        const data = snapshot.val();
-        if (!data) return;
-
-        updateTemperature(data.suhu);
-        updatePidOutput(data.output_pid);
-
-        if (typeof data.relay1 === 'string' || typeof data.relay2 === 'string') {
-            if (typeof data.relay1 === 'string') {
-                updateRelayUI(1, data.relay1.toUpperCase() === 'ON');
-            }
-
-            if (typeof data.relay2 === 'string') {
-                updateRelayUI(2, data.relay2.toUpperCase() === 'ON');
-            }
-        } else if (typeof data.status_kipas === 'string') {
-            const isOn = data.status_kipas.toUpperCase() === 'ON';
-            updateRelayUI(1, isOn);
-            updateRelayUI(2, isOn);
-        }
-    }, handleFirebaseError);
-
-    // Listener setpoint dari Firebase agar input tetap sinkron dengan ESP32
-    database.ref(paths.setpoint).on('value', (snapshot) => {
-        const setpoint = parseFloat(snapshot.val());
-        if (!isNaN(setpoint) && document.activeElement !== elSetpointInput) {
-            elSetpointInput.value = setpoint.toFixed(1);
-        }
-    }, handleFirebaseError);
-
-    // Listener mode operasi dari Firebase.
-    database.ref(paths.mode).on('value', (snapshot) => {
-        const mode = String(snapshot.val() || 'auto').toLowerCase();
-        const isManual = mode === 'manual';
-
-        radioModeManual.checked = isManual;
-        radioModeAuto.checked = !isManual;
-        enableManualControl(isManual);
-    }, handleFirebaseError);
+function publish(topic, payload, retain = true) {
+    if (!mqttClient || !mqttClient.connected) return false;
+    mqttClient.publish(topic, String(payload), { retain });
+    return true;
 }
 
 function updateConnectionStatus(isOnline) {
     if (isOnline) {
         elConnectionStatus.classList.remove('offline');
         elConnectionStatus.classList.add('online');
-        elStatusText.textContent = 'Firebase Online';
+        elStatusText.textContent = 'MQTT Online';
     } else {
         elConnectionStatus.classList.remove('online');
         elConnectionStatus.classList.add('offline');
-        elStatusText.textContent = 'Firebase Offline';
+        elStatusText.textContent = 'MQTT Offline';
     }
 }
 
@@ -138,6 +175,22 @@ function updatePidOutput(value) {
     elPidMeterBar.style.width = `${percent}%`;
 }
 
+function syncSetpointInput(value) {
+    const setpoint = parseFloat(value);
+    if (!isNaN(setpoint) && document.activeElement !== elSetpointInput) {
+        elSetpointInput.value = setpoint.toFixed(1);
+    }
+}
+
+function syncMode(mode) {
+    lastMode = mode === 'manual' ? 'manual' : 'auto';
+    const isManual = lastMode === 'manual';
+
+    radioModeManual.checked = isManual;
+    radioModeAuto.checked = !isManual;
+    enableManualControl(isManual);
+}
+
 function updateRelayUI(relayNum, isOn) {
     const statusEl = relayNum === 1 ? elRelay1Status : elRelay2Status;
     const toggleEl = relayNum === 1 ? elRelay1Toggle : elRelay2Toggle;
@@ -147,29 +200,17 @@ function updateRelayUI(relayNum, isOn) {
     }
 
     statusEl.textContent = isOn ? 'ON' : 'OFF';
-
-    if (isOn) {
-        statusEl.classList.add('on');
-    } else {
-        statusEl.classList.remove('on');
-    }
+    statusEl.classList.toggle('on', isOn);
 }
 
 function revertRelayToggle(relayNum) {
     const toggleEl = relayNum === 1 ? elRelay1Toggle : elRelay2Toggle;
-    const isOn = !toggleEl.checked;
-    toggleEl.checked = isOn;
-    updateRelayUI(relayNum, isOn);
+    updateRelayUI(relayNum, !toggleEl.checked);
 }
 
 function enableManualControl(isManual) {
     elRelay1Toggle.disabled = !isManual;
     elRelay2Toggle.disabled = !isManual;
-}
-
-function handleFirebaseError(error) {
-    console.error('Firebase Error:', error);
-    updateConnectionStatus(false);
 }
 
 function showSaveFeedback() {
@@ -184,75 +225,65 @@ function showSaveFeedback() {
 }
 
 // Tombol Simpan Setpoint
-elBtnSaveSetpoint.addEventListener('click', async () => {
+elBtnSaveSetpoint.addEventListener('click', () => {
     const newVal = parseFloat(elSetpointInput.value);
     if (isNaN(newVal)) return;
 
-    try {
-        await database.ref(paths.setpoint).set(newVal);
+    if (publish(topics.setpoint, newVal, true)) {
         showSaveFeedback();
-    } catch (error) {
-        handleFirebaseError(error);
-        alert('Gagal menyimpan setpoint ke Firebase.');
+    } else {
+        alert('MQTT belum tersambung.');
     }
 });
 
 // Perubahan Mode Operasi
-radioModeAuto.addEventListener('change', async () => {
+radioModeAuto.addEventListener('change', () => {
     if (!radioModeAuto.checked) return;
-
     enableManualControl(false);
-    try {
-        await database.ref(paths.mode).set('auto');
-    } catch (error) {
-        handleFirebaseError(error);
+
+    if (!publish(topics.mode, 'auto', true)) {
+        alert('MQTT belum tersambung.');
     }
 });
 
-radioModeManual.addEventListener('change', async () => {
+radioModeManual.addEventListener('change', () => {
     if (!radioModeManual.checked) return;
-
     enableManualControl(true);
-    try {
-        await database.ref(paths.mode).set('manual');
-    } catch (error) {
-        handleFirebaseError(error);
+
+    if (!publish(topics.mode, 'manual', true)) {
+        alert('MQTT belum tersambung.');
     }
 });
 
-// Toggle manual disimpan sebagai command di Firebase dan dibaca ESP32.
-elRelay1Toggle.addEventListener('change', async (event) => {
-    if (!radioModeManual.checked) {
+// Toggle manual relay
+elRelay1Toggle.addEventListener('change', (event) => {
+    if (lastMode !== 'manual') {
         event.preventDefault();
         alert('Silakan ubah ke mode Manual terlebih dahulu untuk mengontrol kipas secara manual!');
         return;
     }
 
-    const cmd = event.target.checked ? 'ON' : 'OFF';
-    updateRelayUI(1, event.target.checked);
+    const isOn = event.target.checked;
+    updateRelayUI(1, isOn);
 
-    try {
-        await database.ref(paths.relay1Command).set(cmd);
-    } catch (error) {
-        handleFirebaseError(error);
+    if (!publish(topics.relay1Command, isOn ? 'ON' : 'OFF', true)) {
         revertRelayToggle(1);
+        alert('MQTT belum tersambung.');
     }
 });
 
-elRelay2Toggle.addEventListener('change', async (event) => {
-    if (!radioModeManual.checked) {
+elRelay2Toggle.addEventListener('change', (event) => {
+    if (lastMode !== 'manual') {
         event.preventDefault();
         alert('Silakan ubah ke mode Manual terlebih dahulu untuk mengontrol kipas secara manual!');
         return;
     }
 
-    const cmd = event.target.checked ? 'ON' : 'OFF';
-    updateRelayUI(2, event.target.checked);
+    const isOn = event.target.checked;
+    updateRelayUI(2, isOn);
 
-    try {
-        await database.ref(paths.relay2Command).set(cmd);
-    } catch (error) {
-        handleFirebaseError(error);
+    if (!publish(topics.relay2Command, isOn ? 'ON' : 'OFF', true)) {
         revertRelayToggle(2);
+        alert('MQTT belum tersambung.');
     }
 });
